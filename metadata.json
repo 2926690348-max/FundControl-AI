@@ -1,0 +1,6 @@
+{
+  "name": "资金计划合同自动录入AI系统",
+  "description": "面向企业财务的AI资金计划编制与合同智能录入系统，融合大模型合同解析、ERP/SRM多系统数据校正及滚动资金预测。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
