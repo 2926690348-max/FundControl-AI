@@ -142,6 +142,87 @@ app.post("/api/parse-contract", async (req, res) => {
     return res.status(400).json({ error: "请输入或选择合同文本内容" });
   }
 
+  // Attempt Custom LLM / Xiaomi Mimo API parsing if Custom API key is provided
+  if (process.env.CUSTOM_API_KEY && process.env.CUSTOM_API_KEY !== "MY_CUSTOM_API_KEY" && process.env.CUSTOM_API_KEY !== "") {
+    try {
+      const baseUrl = process.env.CUSTOM_API_BASE_URL || "https://api.mimo.xiaomi.com/v1";
+      const modelName = process.env.CUSTOM_API_MODEL || "mimo-v1";
+      
+      const systemPrompt = `你是一个跨国集团的高级财务数字化AI专家。你的任务是分析一份非结构化的中文采购合同文本，精确提取与资金计划、采购执行、账期付款相关的关键核心结构化数据。
+你必须将结果格式化为如下标准的JSON对象，且只返回JSON内容本身，不要用 \`\`\` 包裹：
+{
+  "contractNumber": "合同编号，例如 HT-2026-STEEL-089",
+  "supplierName": "供应商名称（乙方）",
+  "contractAmount": 10000,
+  "productInfo": "物料或产品名称、采购数量与单价描述",
+  "paymentNodes": [
+    {
+      "nodeName": "付款节点名称（如预付款、首批到货款、尾款、质保金）",
+      "percentage": 30,
+      "amount": 3000,
+      "triggerCondition": "付款触发条件（如到货验收后10个工作日）",
+      "estimatedDaysAfterTrigger": 10
+    }
+  ],
+  "creditTerms": "信用账期或结算政策描述（例如 信用账期30天 或 M+45月结）",
+  "expectedPickupDate": "预计提货日期，格式为 YYYY-MM-DD",
+  "expectedDeliveryDate": "预计到货日期，格式为 YYYY-MM-DD",
+  "expectedPaymentDate": "主要首期付款或预付款预计日期，格式为 YYYY-MM-DD"
+}
+
+提取原则：
+1. 合同金额、账期等数字应极其精确，若包含公式或浮动定价（如普氏指数），在合同金额中填入暂估价格，在物料描述中写清公式。
+2. 将付款条款（如预付、到货款、尾款）解析为独立的付款节点列表，写明占比、金额和条件。
+3. 如果合同中没有直接指明某日期（例如预计到货、付款期），请基于2026年（当前年份）以及合同描述进行财务学合理推导，输出规范的 YYYY-MM-DD 格式。`;
+
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.CUSTOM_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: contractText }
+          ],
+          temperature: 0.1
+        })
+      });
+
+      if (response.ok) {
+        const resData: any = await response.json();
+        const textContent = resData.choices?.[0]?.message?.content;
+        if (textContent) {
+          let cleanedText = textContent.trim();
+          if (cleanedText.startsWith("```")) {
+            cleanedText = cleanedText.replace(/^```json?/, "").replace(/```$/, "").trim();
+          }
+          const parsedData = JSON.parse(cleanedText);
+          return res.json({
+            success: true,
+            source: "custom-llm",
+            model: modelName,
+            data: parsedData,
+            confidence: {
+              contractNumber: 0.95,
+              supplierName: 0.95,
+              contractAmount: 0.95,
+              paymentNodes: 0.90,
+              dates: 0.85
+            }
+          });
+        }
+      } else {
+        const errorText = await response.text();
+        console.error("Custom LLM API returned error status:", response.status, errorText);
+      }
+    } catch (error: any) {
+      console.error("Custom LLM API Parsing Error:", error);
+    }
+  }
+
   // Attempt real Gemini API parsing if API key is provided
   if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY") {
     try {
@@ -318,6 +399,16 @@ app.post("/api/parse-contract", async (req, res) => {
       paymentNodes: 0.85,
       dates: 0.80
     }
+  });
+});
+
+// App configuration and AI model details route
+app.get("/api/config", (req, res) => {
+  res.json({
+    hasCustomApiKey: !!process.env.CUSTOM_API_KEY && process.env.CUSTOM_API_KEY !== "MY_CUSTOM_API_KEY" && process.env.CUSTOM_API_KEY !== "",
+    customModel: process.env.CUSTOM_API_MODEL || "mimo-v1",
+    customBaseUrl: process.env.CUSTOM_API_BASE_URL || "https://api.mimo.xiaomi.com/v1",
+    hasGeminiApiKey: !!process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY" && process.env.GEMINI_API_KEY !== "",
   });
 });
 

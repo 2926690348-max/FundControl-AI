@@ -95,6 +95,22 @@ export default function App() {
   const [confidence, setConfidence] = useState<any>(null);
   const [isParsingSuccess, setIsParsingSuccess] = useState(false);
 
+  // API Configuration for custom LLMs like Xiaomi Mimo
+  const [apiConfig, setApiConfig] = useState<{
+    hasCustomApiKey: boolean;
+    customModel: string;
+    customBaseUrl: string;
+    hasGeminiApiKey: boolean;
+  }>({
+    hasCustomApiKey: false,
+    customModel: "",
+    customBaseUrl: "",
+    hasGeminiApiKey: false
+  });
+
+  const [parserSource, setParserSource] = useState<string>("gemini");
+  const [parserModel, setParserModel] = useState<string>("gemini-3.5-flash");
+
   // Edit fields state in Parser
   const [isEditing, setIsEditing] = useState<string | null>(null);
   const [editedFields, setEditedFields] = useState<any>({});
@@ -163,6 +179,14 @@ export default function App() {
 
   // Run initial extraction for Fixed Price as default to fill states smoothly
   useEffect(() => {
+    // Fetch system configurations (such as custom LLM endpoints)
+    fetch("/api/config")
+      .then((res) => res.json())
+      .then((data) => {
+        setApiConfig(data);
+      })
+      .catch((err) => console.error("Error fetching api config:", err));
+
     handleTriggerParse(contractPresets.fixed_price, "fixed_price", true);
   }, []);
 
@@ -185,9 +209,16 @@ export default function App() {
     setParsingLogs([]);
     setIsParsingSuccess(false);
 
+    // Determine engine label based on active config
+    const activeEngine = apiConfig.hasCustomApiKey 
+      ? `小米Mimo大模型 (${apiConfig.customModel})` 
+      : apiConfig.hasGeminiApiKey 
+        ? "Gemini-3.5-flash" 
+        : "本地模拟引擎";
+
     // Simulated logs to reflect modern AI product PM workflow
     const logs = [
-      "🤖 正在唤醒服务端大模型解析引擎 [Gemini-3.5-flash]...",
+      `🤖 正在唤醒服务端大模型解析引擎 [${activeEngine}]...`,
       "🔍 正在读取非结构化文本合同，执行高保真版面分析与OCR配准...",
       "🏷️ 识别到关键主体：上海宝聚重工、江苏德龙、力拓矿业、联想...",
       "⛓️ 正在解析非线性付款条款，拆分付款比例与触发逻辑...",
@@ -213,6 +244,8 @@ export default function App() {
         setParsedResult(resData.data);
         setConfidence(resData.confidence);
         setEditedFields(resData.data);
+        setParserSource(resData.source || "gemini");
+        setParserModel(resData.model || "gemini-3.5-flash");
         setIsParsingSuccess(true);
       }
     } catch (err) {
@@ -986,7 +1019,7 @@ export default function App() {
                           <span className="text-sm font-bold text-slate-100">AI 合同智能解析面板 - 解析成功</span>
                         </div>
                         <span className="text-[11px] text-slate-400">
-                          解析调用：<b>gemini-3.5-flash</b>
+                          解析调用：<b>{parserSource === "custom-llm" ? `小米Mimo大模型 (${parserModel})` : parserSource === "simulator" ? "本地模拟引擎" : `Gemini 3.5 Flash`}</b>
                         </span>
                       </div>
 
