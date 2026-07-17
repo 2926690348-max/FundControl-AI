@@ -166,6 +166,8 @@ export default function App() {
       } else {
         setCustomContractText("");
       }
+    } else {
+      setCustomContractText("");
     }
   }, [uploadedFiles]);
 
@@ -196,6 +198,8 @@ export default function App() {
     }
 
     setUploadedFiles(prev => [...prev, ...newItems]);
+
+    const processedFiles: { name: string; isContract: boolean; classification: any; importance: any; rawText: string }[] = [];
 
     // Process each file sequentially with interactive delays for realistic AI feel
     for (const item of newItems) {
@@ -244,11 +248,9 @@ export default function App() {
         if (item.isImage) {
           // Identify if it's a non-contract document (e.g. food receipts, landscape photos, unrelated items)
           if (
-            lowerName.includes("receipt") || 
             lowerName.includes("invoice") || 
             lowerName.includes("fapiao") || 
             lowerName.includes("lunch") || 
-            lowerName.includes("me") || 
             lowerName.includes("dog") || 
             lowerName.includes("cat") || 
             lowerName.includes("food") || 
@@ -257,8 +259,7 @@ export default function App() {
             lowerName.includes("收据") || 
             lowerName.includes("外卖") || 
             lowerName.includes("生活照") ||
-            lowerName.includes("微信图片") ||
-            lowerName.includes("screencapture")
+            (lowerName.includes("receipt") && !lowerName.includes("contract") && !lowerName.includes("agree"))
           ) {
             isContract = false;
             classification = "non_contract";
@@ -296,7 +297,7 @@ export default function App() {
           ) {
             classification = "payment_terms";
             importance = "high";
-            extractedText = `【高保真OCR识别结果 - 采购合同核心款项约定】\n合同编号：HT-2026-MULTI-07\n买方（甲方）：上海宝聚重工集团有限公司\n卖方（乙方）：沈阳机床股份有限公司\n一、设备清单及价格：\nVMC850B 型立式加工中心两台，含税总价共计：8,000,000.00 元（大写：捌佰万元整）。\n二、付款阶段约定：\n1. 合同签字盖章生效后 3 个工作日内，甲方向乙方支付总价的 20%（即 ¥ 1,600,000.00）作为项目启动预付款。\n2. 全套机床运至甲方指定 1 号仓库完成初步安装并凭收货凭证及乙方出具的增值税专用发票，甲方向乙方支付合同总金额的 50%（即 ¥ 4,000,000.00）。\n3. 机床正式联动调试完成并经过双方技术组签字验收合格满 30 个工作日后，支付剩余的 30%（即 ¥ 2,400,000.00）作为结算尾款。\n三、预计交货及提货日期：\n乙方负责运至指定地点，提货日为2026-08-01，到货日为2026-08-10。`;
+            extractedText = `【高保真OCR识别结果 - 采购合同核心款项约定】\n合同编号：HT-2026-MULTI-07\n买方（甲方）：上海宝聚重工集团有限公司\n卖方（乙方）：沈阳机床股份有限公司\n一、设备清单及价格：\nVMC850B 型立式加工中心两台，含税总价共计：8,000,000.00 元（大写：捌佰万元整）。\n二、付款阶段约定：\n1. 合同签字盖章生效后 3 个工作日内，甲方向乙方支付总价 of 20%（即 ¥ 1,600,000.00）作为项目启动预付款。\n2. 全套机床运至甲方指定 1 号仓库完成初步安装并凭收货凭证及乙方出具的增值税专用发票，甲方向乙方支付合同总金额的 50%（即 ¥ 4,000,000.00）。\n3. 机床正式联动调试完成并经过双方技术组签字验收合格满 30 个工作日后，支付剩余 of 30%（即 ¥ 2,400,000.00）作为结算尾款。\n三、预计交货及提货日期：\n乙方负责运至指定地点，提货日为2026-08-01，到货日为2026-08-10。`;
           } else {
             classification = "general_terms";
             importance = "low";
@@ -315,6 +316,14 @@ export default function App() {
           importance = "low";
           extractedText = rawText;
         }
+
+        processedFiles.push({
+          name: file.name,
+          isContract,
+          classification,
+          importance,
+          rawText: extractedText
+        });
 
         // Finalize state for the file
         setUploadedFiles(prev => prev.map(f => 
@@ -346,6 +355,20 @@ export default function App() {
     }
 
     setParsingLoading(false);
+
+    // Auto run compilation and execute AI LLM analysis immediately
+    const validProcessed = processedFiles.filter(f => f.isContract);
+    if (validProcessed.length > 0) {
+      const compiledText = validProcessed.map((file, idx) => {
+        const transCls = translateClassification(file.classification);
+        const transImp = translateImportance(file.importance);
+        return `==================================================\n📄 [合同多图流合并 - 页面 ${idx + 1}] : ${file.name}\n🏷️ 分类: ${transCls} | 权重: ${transImp}\n==================================================\n\n${file.rawText || "（空文件）"}`;
+      }).join("\n\n\n");
+      
+      setCustomContractText(compiledText);
+      setParsingLogs(prev => [...prev, "🚀 [合并编译] 多图合同文本已自动编译，正在启动智能大模型解析流..."]);
+      await handleTriggerParse(compiledText, "custom");
+    }
   };
 
   const loadDemoMultiFiles = () => {
