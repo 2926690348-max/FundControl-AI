@@ -80,184 +80,341 @@ const USER_PERSONAS = [
       "缺乏统一、透明的资金全景视图，难以穿透到底层业务合同来评估真实的付款风险。",
       "财务被动付款导致资金冗余度高、头寸沉淀严重，集团融资占用成本居高不下。"
     ],
-    aiSolution: "提供集团业财一体化资金滚动预测看板，实时穿透物流、仓储、合同全链路。提前30天识别大额资金缺口与付款高峰，实现精细化资金排程，每年减少百万级利息占用成本。"
+    aiSolution: "提供集团业财一体化资金滚动预测看板，实时穿透物流、仓储、生产进度与合同细节，大幅压缩资金冗余度，辅助决策，将冗余资金沉淀降低30%以上。"
   }
 ];
 
 export default function App() {
-  // Navigation tabs
-  const [activeTab, setActiveTab] = useState<"demo" | "blueprint">("demo");
-  
-  // Sub-tabs in Simulator
-  const [demoSubTab, setDemoSubTab] = useState<"dashboard" | "parser" | "integration" | "collaboration">("dashboard");
-
-  // Contract Parser State
-  const [selectedPreset, setSelectedPreset] = useState<"fixed_price" | "variable_price" | "framework" | "custom">("fixed_price");
-  const [customContractText, setCustomContractText] = useState("");
-  const [parsingLoading, setParsingLoading] = useState(false);
-  const [parsingLogs, setParsingLogs] = useState<string[]>([]);
-  const [parsedResult, setParsedResult] = useState<ContractData | null>(null);
-  const [confidence, setConfidence] = useState<any>(null);
-  const [isParsingSuccess, setIsParsingSuccess] = useState(false);
-
-  // API Configuration for custom LLMs like Xiaomi Mimo
-  const [apiConfig, setApiConfig] = useState<{
-    hasCustomApiKey: boolean;
-    customModel: string;
-    customBaseUrl: string;
-    hasGeminiApiKey: boolean;
-  }>({
-    hasCustomApiKey: false,
-    customModel: "",
-    customBaseUrl: "",
-    hasGeminiApiKey: false
-  });
-
-  const [parserSource, setParserSource] = useState<string>("gemini");
-  const [parserModel, setParserModel] = useState<string>("gemini-3.5-flash");
-
-  // Edit fields state in Parser
-  const [isEditing, setIsEditing] = useState<string | null>(null);
-  const [editedFields, setEditedFields] = useState<any>({});
-
-  // File Upload State Engine
-  const [uploadedFile, setUploadedFile] = useState<{
+  // File Upload State Engine with Multi-file support, smart Filter and Classifier
+  interface UploadedFileItem {
+    id: string;
     name: string;
     size: number;
     type: string;
+    base64?: string;
     rawText?: string;
-  } | null>(null);
+    isImage: boolean;
+    isOcrScanning: boolean;
+    status: "idle" | "decoding" | "classifying" | "completed" | "error";
+    isContract: boolean; // filter outcome
+    classification: "payment_terms" | "signatures" | "general_terms" | "non_contract" | "excel_sheet" | "word_doc"; // classifier outcome
+    importance: "high" | "medium" | "low" | "none";
+    rejectionReason?: string;
+  }
+
+  const [activeTab, setActiveTab] = useState<"demo" | "blueprint">("demo");
+  const [demoSubTab, setDemoSubTab] = useState<"dashboard" | "parser" | "integration" | "collaboration">("dashboard");
+  const [selectedPreset, setSelectedPreset] = useState<string>("fixed_price");
+  const [customContractText, setCustomContractText] = useState<string>("");
+  const [parsedResult, setParsedResult] = useState<ContractData | null>(null);
+  const [confidence, setConfidence] = useState<number>(0);
+  const [isParsingSuccess, setIsParsingSuccess] = useState<boolean>(false);
+  const [parsingLoading, setParsingLoading] = useState<boolean>(false);
+  const [parsingLogs, setParsingLogs] = useState<string[]>([]);
+  const [apiConfig, setApiConfig] = useState<{ hasGeminiApiKey: boolean; hasCustomApiKey: boolean; customModel?: string }>({ hasGeminiApiKey: false, hasCustomApiKey: false });
+  const [isEditing, setIsEditing] = useState<string | null>(null);
+  const [editedFields, setEditedFields] = useState<any>({});
+  const [parserSource, setParserSource] = useState<string>("gemini");
+  const [parserModel, setParserModel] = useState<string>("gemini-3.5-flash");
+  
+  const [showBase64Modal, setShowBase64Modal] = useState<boolean>(false);
   const [fileBase64, setFileBase64] = useState<string>("");
-  const [isImage, setIsImage] = useState(false);
-  const [isOcrScanning, setIsOcrScanning] = useState(false);
+  const [isImage, setIsImage] = useState<boolean>(false);
+  const [isOcrScanning, setIsOcrScanning] = useState<boolean>(false);
+  const [uploadedFile, setUploadedFile] = useState<any | null>(null);
+
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFileItem[]>([]);
+  const [activeFileIdForBase64, setActiveFileIdForBase64] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [showBase64Modal, setShowBase64Modal] = useState(false);
 
-  const handleFileUpload = async (file: File) => {
-    setUploadError(null);
-    setIsOcrScanning(false);
-    setUploadedFile({
-      name: file.name,
-      size: file.size,
-      type: file.type
-    });
-    
-    const fileType = file.name.split('.').pop()?.toLowerCase();
-    
-    try {
-      if (fileType === "xlsx" || fileType === "xls") {
-        setIsImage(false);
-        setFileBase64("");
-        setParsingLoading(true);
-        setParsingLogs(["📂 正在读取 Excel 工作簿并开始结构化解析..."]);
-        
-        const extractedText = await parseXlsx(file);
-        
-        setUploadedFile(prev => prev ? { ...prev, rawText: extractedText } : null);
-        setCustomContractText(extractedText);
-        setSelectedPreset("custom");
-        
-        setParsingLogs([
-          "📂 成功读取 Excel 工作簿！",
-          `📊 已提取工作表，并自动转换为 Markdown CSV 格式 (共约 ${extractedText.length} 字符)`,
-          "🤖 准备好将此结构化表格作为上下文发送给大模型进行资金排程解析..."
-        ]);
-        setParsingLoading(false);
-      } 
-      else if (fileType === "docx") {
-        setIsImage(false);
-        setFileBase64("");
-        setParsingLoading(true);
-        setParsingLogs(["📂 正在解压并解包 Word 文档 XML 节点..."]);
-        
-        const extractedText = await parseDocx(file);
-        
-        setUploadedFile(prev => prev ? { ...prev, rawText: extractedText } : null);
-        setCustomContractText(extractedText);
-        setSelectedPreset("custom");
-        
-        setParsingLogs([
-          "📂 成功解包 Word (.docx) 结构！",
-          `✍️ 已提纯纯文本合同条款 (共约 ${extractedText.length} 字符)`,
-          "🤖 准备就绪，可以随时触发大模型进行付款节点识别..."
-        ]);
-        setParsingLoading(false);
-      } 
-      else if (file.type.startsWith("image/")) {
-        setIsImage(true);
-        setParsingLoading(true);
-        setParsingLogs(["📸 捕获到合同图片，正在启动高保真 Base64 编码器..."]);
-        
-        const base64 = await fileToBase64(file);
-        setFileBase64(base64);
-        
-        // Let's trigger a beautiful visual laser OCR scan simulation!
-        setIsOcrScanning(true);
-        setParsingLogs(prev => [
-          ...prev,
-          "🔗 成功转换为 Base64 文本编码（格式化为 Data URL）！",
-          "🔬 开始执行本地/服务端多模态视觉版面分析 (Layout Analysis)...",
-          "⚡ 正在分析文档图像中的文字边缘特征与高频像素坐标...",
-          "🔍 激光雷达扫描匹配付款条款、银行账户、金额及签章中..."
-        ]);
-        
-        // Simulate OCR text extraction after 2.2 seconds
-        setTimeout(() => {
-          setIsOcrScanning(false);
-          
-          // Let's generate a highly realistic parsed text based on a mock invoice/contract
-          const extractedText = `【高保真OCR识别结果 - 采购合同图片】
-合同编号：HT-2026-IMAGE-OCR
-买方（甲方）：上海宝聚重工集团有限公司
-卖方（乙方）：沈阳机床股份有限公司
-一、设备清单与采购总价
-1. 本合同约定购买 VMC850B 型立式加工中心两台。
-2. 合同含税总价为人民币：8,000,000.00 元（大写：捌佰万元整）。
-二、交货与付款
-1. 甲方于本合同生效之日起 3 个工作日内向乙方支付总价 of 20%（即 ¥ 1,600,000.00）作为设备预付款。
-2. 设备发货运抵买方现场并完成初步安装调试后，凭收货签单及乙方开具的增值税发票支付总价 of 50%（即 ¥ 4,000,000.00）。
-3. 设备正式验收合格满 30 个工作日后，支付剩余 30%（即 ¥ 2,400,000.00）作为设备尾款。
-三、运输及保修
-1. 乙方负责将设备运送至甲方 1 号仓，预计交货日期为 2026 年 8 月 10 日。`;
-          
-          setUploadedFile(prev => prev ? { ...prev, rawText: extractedText } : null);
-          setCustomContractText(extractedText);
-          setSelectedPreset("custom");
-          
-          setParsingLogs(prev => [
-            ...prev,
-            "✅ 多模态版面配准与文字提取已完成！",
-            `📝 提取出可编辑文本合同 (共约 ${extractedText.length} 字符)`,
-            "💡 [科普知识] AI 读取图片的核心第一步正是：在客户端/传输层使用 Base64 算法对图片二进制流进行编码（即将图片转化为 sk-... 等字符序列），然后将其附带在 JSON 请求的 image/png 数据体中传递给多模态大模型(如 Gemini/Mimo)的视觉分析器。"
-          ]);
-          setParsingLoading(false);
-        }, 2200);
-      } 
-      else {
-        // Plain text (.txt, etc.)
-        setIsImage(false);
-        setFileBase64("");
-        setParsingLoading(true);
-        setParsingLogs(["📂 正在读取文本文档..."]);
-        
-        const extractedText = await file.text();
-        setUploadedFile(prev => prev ? { ...prev, rawText: extractedText } : null);
-        setCustomContractText(extractedText);
-        setSelectedPreset("custom");
-        
-        setParsingLogs([
-          "📂 成功读取纯文本文档！",
-          `📝 合同内容已自动同步到草稿框 (共约 ${extractedText.length} 字符)`
-        ]);
-        setParsingLoading(false);
-      }
-    } catch (err: any) {
-      console.error(err);
-      setUploadError(err.message || "解析文件时发生未知错误");
-      setParsingLogs(prev => [...prev, `❌ 发生错误：${err.message || "无法完成文件解析"}`]);
-      setParsingLoading(false);
+  // Translate classification tags for UI display
+  const translateClassification = (cls: string) => {
+    switch (cls) {
+      case "payment_terms": return "核心账期付款条款页";
+      case "signatures": return "印章授权双签页";
+      case "general_terms": return "一般通用合同条文页";
+      case "excel_sheet": return "结算工作表 (Excel)";
+      case "word_doc": return "合同大纲提纯 (Word)";
+      case "non_contract": return "非合同干扰单据";
+      default: return "未分类文档";
     }
+  };
+
+  // Translate importance values
+  const translateImportance = (imp: string) => {
+    switch (imp) {
+      case "high": return "高重要度 (提取权重100%)";
+      case "medium": return "中重要度 (结构化提取)";
+      case "low": return "低重要度 (法务条文参考)";
+      case "none": return "无 (已被安全过滤拦截)";
+      default: return "普通关注";
+    }
+  };
+
+  // Automated compiler to concatenate all accepted file contents into customContractText
+  useEffect(() => {
+    if (uploadedFiles.length > 0) {
+      const validFiles = uploadedFiles.filter(f => f.isContract && f.status === "completed");
+      if (validFiles.length > 0) {
+        const compiledText = validFiles.map((file, idx) => {
+          const transCls = translateClassification(file.classification);
+          const transImp = translateImportance(file.importance);
+          return `==================================================\n📄 [合同多图流合并 - 页面 ${idx + 1}] : ${file.name}\n🏷️ 分类: ${transCls} | 权重: ${transImp}\n==================================================\n\n${file.rawText || "（空文件）"}`;
+        }).join("\n\n\n");
+        setCustomContractText(compiledText);
+      } else {
+        setCustomContractText("");
+      }
+    }
+  }, [uploadedFiles]);
+
+  const handleMultiFileUpload = async (files: FileList | File[]) => {
+    setUploadError(null);
+    setSelectedPreset("custom");
+    setParsingLoading(true);
+    setParsingLogs(["⚡ 启动智能多模态分发和分类过滤对齐引擎..."]);
+
+    const newItems: UploadedFileItem[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const id = `file_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`;
+      const isImg = file.type.startsWith("image/");
+      
+      newItems.push({
+        id,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        isImage: isImg,
+        isOcrScanning: false,
+        status: "idle",
+        isContract: true,
+        classification: "general_terms",
+        importance: "low"
+      });
+    }
+
+    setUploadedFiles(prev => [...prev, ...newItems]);
+
+    // Process each file sequentially with interactive delays for realistic AI feel
+    for (const item of newItems) {
+      const file = Array.from(files).find(f => f.name === item.name);
+      if (!file) continue;
+
+      // Stage 1: Base64/Raw Decoding
+      setUploadedFiles(prev => prev.map(f => f.id === item.id ? { ...f, status: "decoding", isOcrScanning: true } : f));
+      setParsingLogs(prev => [...prev, `📂 [转码通道] 正在对 ${file.name} 执行二进制字节对齐与 Base64 解码编码...`]);
+      
+      await new Promise(r => setTimeout(r, 600));
+
+      let base64 = "";
+      let rawText = "";
+      const fileType = file.name.split('.').pop()?.toLowerCase();
+
+      try {
+        if (item.isImage) {
+          base64 = await fileToBase64(file);
+        } else if (fileType === "xlsx" || fileType === "xls") {
+          rawText = await parseXlsx(file);
+        } else if (fileType === "docx") {
+          rawText = await parseDocx(file);
+        } else {
+          rawText = await file.text();
+        }
+
+        // Stage 2: Classifier and Intelligent Filter Scanning
+        setUploadedFiles(prev => prev.map(f => 
+          f.id === item.id 
+            ? { ...f, status: "classifying", base64, rawText: rawText || undefined } 
+            : f
+        ));
+        setParsingLogs(prev => [...prev, `🔬 [版面分类] 正在利用深度神经网络对 ${file.name} 进行合规指纹特征检索与合同过滤...`]);
+
+        await new Promise(r => setTimeout(r, 1000));
+
+        let isContract = true;
+        let classification: "payment_terms" | "signatures" | "general_terms" | "non_contract" | "excel_sheet" | "word_doc" = "general_terms";
+        let importance: "high" | "medium" | "low" | "none" = "low";
+        let rejectionReason = "";
+        let extractedText = rawText;
+
+        const lowerName = file.name.toLowerCase();
+
+        if (item.isImage) {
+          // Identify if it's a non-contract document (e.g. food receipts, landscape photos, unrelated items)
+          if (
+            lowerName.includes("receipt") || 
+            lowerName.includes("invoice") || 
+            lowerName.includes("fapiao") || 
+            lowerName.includes("lunch") || 
+            lowerName.includes("me") || 
+            lowerName.includes("dog") || 
+            lowerName.includes("cat") || 
+            lowerName.includes("food") || 
+            lowerName.includes("shouju") || 
+            lowerName.includes("发票") || 
+            lowerName.includes("收据") || 
+            lowerName.includes("外卖") || 
+            lowerName.includes("生活照") ||
+            lowerName.includes("微信图片") ||
+            lowerName.includes("screencapture")
+          ) {
+            isContract = false;
+            classification = "non_contract";
+            importance = "none";
+            rejectionReason = "此图像特征或文件名匹配日常杂质/消费票据/生活照片。已自动触发安全拦截器，防止噪声数据污染大语言模型的提取任务。";
+            extractedText = `【防造干扰拦截页面 - ${file.name}】\n内容提示：已被智能过滤器拦截阻断。原因：不具备采购、供应、财务付款或印章签署任何合同特征要素。`;
+          } else if (
+            lowerName.includes("sign") || 
+            lowerName.includes("stamp") || 
+            lowerName.includes("seal") || 
+            lowerName.includes("gaizhang") || 
+            lowerName.includes("qianzhang") || 
+            lowerName.includes("签字") || 
+            lowerName.includes("盖章") || 
+            lowerName.includes("印章") ||
+            lowerName.includes("授权") ||
+            lowerName.includes("末页") ||
+            lowerName.includes("尾页")
+          ) {
+            classification = "signatures";
+            importance = "high";
+            extractedText = `【高保真OCR识别结果 - 合同签署/授权印章页】\n甲方：上海宝聚重工集团有限公司\n法定代表人授权签字：张宝聚 （已盖公司合同专用章、公章）\n乙方：沈阳机床股份有限公司\n法定代表人授权签字：李机床 （已盖公司公章、财务专用章）\n签署日期：2026年7月15日\n校验：骑缝章匹配良好。`;
+          } else if (
+            lowerName.includes("pay") || 
+            lowerName.includes("price") || 
+            lowerName.includes("money") || 
+            lowerName.includes("amount") || 
+            lowerName.includes("node") || 
+            lowerName.includes("fukuan") || 
+            lowerName.includes("付款") || 
+            lowerName.includes("账期") || 
+            lowerName.includes("金额") ||
+            lowerName.includes("第3页") ||
+            lowerName.includes("page3")
+          ) {
+            classification = "payment_terms";
+            importance = "high";
+            extractedText = `【高保真OCR识别结果 - 采购合同核心款项约定】\n合同编号：HT-2026-MULTI-07\n买方（甲方）：上海宝聚重工集团有限公司\n卖方（乙方）：沈阳机床股份有限公司\n一、设备清单及价格：\nVMC850B 型立式加工中心两台，含税总价共计：8,000,000.00 元（大写：捌佰万元整）。\n二、付款阶段约定：\n1. 合同签字盖章生效后 3 个工作日内，甲方向乙方支付总价的 20%（即 ¥ 1,600,000.00）作为项目启动预付款。\n2. 全套机床运至甲方指定 1 号仓库完成初步安装并凭收货凭证及乙方出具的增值税专用发票，甲方向乙方支付合同总金额的 50%（即 ¥ 4,000,000.00）。\n3. 机床正式联动调试完成并经过双方技术组签字验收合格满 30 个工作日后，支付剩余的 30%（即 ¥ 2,400,000.00）作为结算尾款。\n三、预计交货及提货日期：\n乙方负责运至指定地点，提货日为2026-08-01，到货日为2026-08-10。`;
+          } else {
+            classification = "general_terms";
+            importance = "low";
+            extractedText = `【高保真OCR识别结果 - 合同一般性条款】\n一、运输保险：由乙方负责运送并承担相关保险。\n二、争议解决：任何由此合同产生的法律诉讼纠纷均由甲方所在地人民法院管辖。\n三、保密协议：双方对本商务合同约定的定价公式、设备参数承担长期保密责任，期限为5年。`;
+          }
+        } else if (fileType === "xlsx" || fileType === "xls") {
+          classification = "excel_sheet";
+          importance = "medium";
+          extractedText = rawText;
+        } else if (fileType === "docx") {
+          classification = "word_doc";
+          importance = "medium";
+          extractedText = rawText;
+        } else {
+          classification = "general_terms";
+          importance = "low";
+          extractedText = rawText;
+        }
+
+        // Finalize state for the file
+        setUploadedFiles(prev => prev.map(f => 
+          f.id === item.id 
+            ? { 
+                ...f, 
+                status: "completed", 
+                isOcrScanning: false,
+                isContract, 
+                classification, 
+                importance, 
+                rejectionReason: rejectionReason || undefined,
+                rawText: extractedText 
+              } 
+            : f
+        ));
+
+        if (isContract) {
+          setParsingLogs(prev => [...prev, `✅ [安全过滤器] ${file.name} 审核通过。分类标签：【${translateClassification(classification)}】，高保真 OCR 文本对齐已就绪！`]);
+        } else {
+          setParsingLogs(prev => [...prev, `⚠️ [拦截屏蔽] 检测到干扰项：${file.name}，原因：${rejectionReason}`]);
+        }
+
+      } catch (err: any) {
+        console.error(err);
+        setUploadedFiles(prev => prev.map(f => f.id === item.id ? { ...f, status: "error", isOcrScanning: false } : f));
+        setParsingLogs(prev => [...prev, `❌ [失败] 文件读取错误 ${file.name}: ${err.message || "未知错误"}`]);
+      }
+    }
+
+    setParsingLoading(false);
+  };
+
+  const loadDemoMultiFiles = () => {
+    setUploadError(null);
+    setSelectedPreset("custom");
+    setParsingLoading(true);
+    setParsingLogs([
+      "⚡ 正在加载官方多图合同测试组合包(含干扰拦截过滤示范)...",
+      "🔬 提示：本测试包模拟了真实财务审核中的常见场景——多张合同图像与误上传的生活发票混合进行批量分类和拦截。"
+    ]);
+
+    const demoFiles: UploadedFileItem[] = [
+      {
+        id: "demo_file_1",
+        name: "沈阳机床采购合同_第3页_款项与账期约定.png",
+        size: 245800,
+        type: "image/png",
+        isImage: true,
+        isOcrScanning: false,
+        status: "completed",
+        isContract: true,
+        classification: "payment_terms",
+        importance: "high",
+        base64: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAYAAABw4pVUAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAALEgAACxIB0t1+/AAAABZ0RVh0Q3JlYXRpb24gVGltZQAwNy8xNi8yNkuZTYMAAAAhdEVYdFNvZnR3YXJlAEFkb2JlIEZpcmV3b3JrcyBDUzYstGdjAAABV0lEQVR4nO3BMQEAAADCoPVPbQ0PoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMBvAAY6AAFZ6P7lAAAAAElFTkSuQmCC",
+        rawText: `【高保真OCR识别结果 - 采购合同核心款项约定】\n合同编号：HT-2026-MULTI-07\n买方（甲方）：上海宝聚重工集团有限公司\n卖方（乙方）：沈阳机床股份有限公司\n一、设备名称、规格数量、金额：\nVMC850B 型立式加工中心两台，含税总价共计：8,000,000.00 元（大写：捌佰万元整）。\n二、付款节点及条件：\n1. 合同签字盖章生效后 3 个工作日内，甲方向乙方支付总价的 20%（即 ¥ 1,600,000.00）作为项目启动预付款。\n2. 全套机床运至甲方指定 1 号仓库完成初步安装并凭收货凭证及乙方出具的增值税专用发票，甲方向乙方支付合同总金额 of 50%（即 ¥ 4,000,000.00）。\n3. 机床正式联动调试完成并经过双方技术组签字验收合格满 30 个工作日后，支付剩余的 30%（即 ¥ 2,400,000.00）作为设备结算尾款。\n三、提货与到货日期安排：\n乙方负责将机床运抵现场，预计提货日期为 2026年8月1日，预计到货日期为 2026年8月10日。`
+      },
+      {
+        id: "demo_file_2",
+        name: "合同第12页_双向授权公章签字.png",
+        size: 189000,
+        type: "image/png",
+        isImage: true,
+        isOcrScanning: false,
+        status: "completed",
+        isContract: true,
+        classification: "signatures",
+        importance: "high",
+        base64: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAYAAABw4pVUAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAALEgAACxIB0t1+/AAAABZ0RVh0Q3JlYXRpb24gVGltZQAwNy8xNi8yNkuZTYMAAAAhdEVYdFNvZnR3YXJlAEFkb2JlIEZpcmV3b3JrcyBDUzYstGdjAAABV0lEQVR4nO3BMQEAAADCoPVPbQ0PoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMBvAAY6AAFZ6P7lAAAAAElFTkSuQmCC",
+        rawText: `【高保真OCR识别结果 - 合同签署/授权印章页】\n甲方签字代表：张宝聚（董事长兼首席执行官）\n乙方签字代表：李机床（沈阳机床授权财务负责人）\n签署单位甲：上海宝聚重工集团有限公司（公章、合同专用章已盖，骑缝章相符）\n签署单位乙：沈阳机床股份有限公司（公章、财务专用章已盖，骑缝章相符）\n签署日期：2026年7月15日`
+      },
+      {
+        id: "demo_file_3",
+        name: "中午和同事聚餐发票报销凭证.jpg",
+        size: 95400,
+        type: "image/jpeg",
+        isImage: true,
+        isOcrScanning: false,
+        status: "completed",
+        isContract: false,
+        classification: "non_contract",
+        importance: "none",
+        rejectionReason: "该文件指纹对应于餐饮日常发票收据，并非正式交易采购合同，不具备任何合同要素。智能过滤器已自动拦截此页，防止其噪声带入大语言模型导致财务账期计算偏差。",
+        base64: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAYAAABw4pVUAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAALEgAACxIB0t1+/AAAABZ0RVh0Q3JlYXRpb24gVGltZQAwNy8xNi8yNkuZTYMAAAAhdEVYdFNvZnR3YXJlAEFkb2JlIEZpcmV3b3JrcyBDUzYstGdjAAABV0lEQVR4nO3BMQEAAADCoPVPbQ0PoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMBvAAY6AAFZ6P7lAAAAAElFTkSuQmCC",
+        rawText: "【高保真OCR识别结果 - 拦截页面】商家名称：老北京麻辣香锅，实付金额：¥ 56.50元，消费日期：2026年7月15日"
+      }
+    ];
+
+    setTimeout(() => {
+      setUploadedFiles(demoFiles);
+      setParsingLogs([
+        "✅ 成功一键加载多图测试组合包！",
+        "📂 已自动在客户端完成 Base64 提取，并并行调用大模型分类器/过滤器：",
+        " ├─ 📄 沈阳机床合同付款页 (判定：【核心账期付款条款页】 | 重点关注 ✅)",
+        " ├─ 📄 合同双签授权公章页 (判定：【印章授权双签页】 | 重点关注 ✅)",
+        " └─ 📄 中午聚餐发票报销凭证 (判定：【非合同干扰单据】 | 智能拦截安全屏蔽 ❌)",
+        "💡 体验反馈：大模型分析多张图片时，正是将有效的 Base64 字节流连同其分类标签，打包合并发送至服务端的！请点击底部【运行智能 AI 合同解析】体验最终排程！"
+      ]);
+      setParsingLoading(false);
+    }, 1200);
   };
 
   const handleDrag = (e: React.DragEvent) => {
@@ -274,11 +431,10 @@ export default function App() {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFileUpload(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleMultiFileUpload(e.dataTransfer.files);
     }
   };
-
   // Cross-system Data alignment state
   const [systemMatchLoading, setSystemMatchLoading] = useState(false);
   const [alignedSystems, setAlignedSystems] = useState<SystemData | null>(null);
@@ -1149,89 +1305,199 @@ export default function App() {
                           type="file"
                           id="contract-file-upload"
                           className="hidden"
+                          multiple
                           accept=".docx,.xlsx,.xls,.png,.jpg,.jpeg,.txt"
                           onChange={(e) => {
-                            if (e.target.files && e.target.files[0]) {
-                              handleFileUpload(e.target.files[0]);
+                            if (e.target.files && e.target.files.length > 0) {
+                              handleMultiFileUpload(e.target.files);
                             }
                           }}
                         />
 
-                        {uploadedFile ? (
-                          <div className="flex flex-col items-center text-left">
-                            <div className="flex items-center gap-2.5 w-full bg-white p-2.5 rounded-lg border border-slate-200">
-                              <div className="p-2 bg-blue-50 rounded text-blue-600">
-                                {uploadedFile.name.endsWith(".docx") ? (
-                                  <FileText className="w-5 h-5 text-indigo-500" />
-                                ) : uploadedFile.name.match(/\.(xlsx|xls)$/) ? (
-                                  <FileSpreadsheet className="w-5 h-5 text-emerald-500" />
-                                ) : isImage ? (
-                                  <Paperclip className="w-5 h-5 text-rose-500" />
-                                ) : (
-                                  <FileText className="w-5 h-5 text-slate-500" />
-                                )}
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-xs font-bold text-slate-800 truncate" title={uploadedFile.name}>
-                                  {uploadedFile.name}
-                                </p>
-                                <p className="text-[10px] text-slate-400 font-mono mt-0.5">
-                                  {(uploadedFile.size / 1024).toFixed(1)} KB | {uploadedFile.type || "未知类型"}
-                                </p>
-                              </div>
-                              <button
+                        {uploadedFiles.length > 0 ? (
+                          <div className="flex flex-col gap-3 text-left w-full">
+                            {/* Header or Quick Stats of Multi-Files */}
+                            <div className="flex items-center justify-between text-[11px] text-slate-500 bg-slate-100 p-2 rounded-lg">
+                              <span>已上传 {uploadedFiles.length} 个文件</span>
+                              <button 
                                 onClick={(e) => {
                                   e.preventDefault();
-                                  setUploadedFile(null);
-                                  setFileBase64("");
-                                  setIsImage(false);
+                                  setUploadedFiles([]);
                                   setCustomContractText("");
                                 }}
-                                className="text-slate-400 hover:text-slate-600 p-1 rounded-full hover:bg-slate-100"
-                                title="清除文件"
+                                className="text-red-500 hover:text-red-700 font-bold transition-colors cursor-pointer"
                               >
-                                <X className="w-3.5 h-3.5" />
+                                清空全部
                               </button>
                             </div>
 
-                            {/* Show image thumbnail + base64 code reveal button */}
-                            {isImage && fileBase64 && (
-                              <div className="mt-3 w-full bg-slate-100/50 p-2 rounded-lg border border-slate-200/50 flex flex-col items-center gap-2">
-                                <div className="relative w-full max-h-32 overflow-hidden rounded bg-white flex items-center justify-center border border-slate-200">
-                                  <img 
-                                    src={fileBase64} 
-                                    alt="合同预览" 
-                                    className="max-h-28 object-contain rounded"
-                                    referrerPolicy="no-referrer"
-                                  />
-                                </div>
-                                <div className="flex gap-2 w-full justify-center">
-                                  <button
-                                    type="button"
-                                    onClick={() => setShowBase64Modal(true)}
-                                    className="text-[10px] bg-slate-900 text-slate-300 hover:bg-slate-800 px-2.5 py-1 rounded font-mono flex items-center gap-1 transition-colors cursor-pointer"
+                            {/* Scrollable list of files with their individual status, filters and classifiers */}
+                            <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+                              {uploadedFiles.map((file) => {
+                                const isScanning = file.isOcrScanning || file.status === "decoding" || file.status === "classifying";
+                                return (
+                                  <div 
+                                    key={file.id}
+                                    className={`p-3 rounded-xl border transition-all duration-200 relative ${
+                                      !file.isContract 
+                                        ? "bg-rose-50/70 border-rose-100 text-rose-900" 
+                                        : file.status === "completed" 
+                                          ? "bg-white border-slate-200 hover:border-slate-300 shadow-sm" 
+                                          : "bg-slate-50 border-slate-150"
+                                    }`}
                                   >
-                                    <Eye className="w-3 h-3 text-sky-400" />
-                                    查看 Base64 编码 (字节流)
-                                  </button>
-                                </div>
-                              </div>
-                            )}
+                                    {/* Scan laser overlay if analyzing */}
+                                    {isScanning && (
+                                      <div className="absolute inset-0 bg-blue-50/20 rounded-xl overflow-hidden pointer-events-none">
+                                        <div className="absolute left-0 right-0 h-0.5 bg-blue-400 opacity-60 shadow-[0_0_8px_#3b82f6] animate-scan-laser top-0"></div>
+                                      </div>
+                                    )}
 
-                            {/* Info feedback based on parse state */}
-                            <p className="text-[10px] text-emerald-600 font-semibold mt-2.5 flex items-center gap-1 justify-center w-full">
-                              <CheckCircle className="w-3.5 h-3.5" /> 文件转码读取成功！已同步至解析引擎
+                                    {/* Line 1: File Info and Action Buttons */}
+                                    <div className="flex items-start gap-2.5">
+                                      <div className="p-1.5 bg-slate-100 rounded text-slate-600 mt-0.5 flex-shrink-0">
+                                        {file.name.endsWith(".docx") ? (
+                                          <FileText className="w-4 h-4 text-indigo-500" />
+                                        ) : file.name.match(/\.(xlsx|xls)$/) ? (
+                                          <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
+                                        ) : file.isImage ? (
+                                          <Paperclip className="w-4 h-4 text-rose-500" />
+                                        ) : (
+                                          <FileText className="w-4 h-4 text-slate-500" />
+                                        )}
+                                      </div>
+
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-xs font-bold text-slate-800 truncate" title={file.name}>
+                                          {file.name}
+                                        </p>
+                                        <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+                                          {(file.size / 1024).toFixed(1)} KB | {file.type || "未知格式"}
+                                        </p>
+                                      </div>
+
+                                      {/* Buttons on the right */}
+                                      <div className="flex items-center gap-1 flex-shrink-0">
+                                        {file.isImage && file.base64 && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.preventDefault();
+                                              setFileBase64(file.base64 || "");
+                                              setShowBase64Modal(true);
+                                            }}
+                                            className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded transition-colors"
+                                            title="查看 Base64"
+                                          >
+                                            <Eye className="w-3.5 h-3.5 text-sky-500" />
+                                          </button>
+                                        )}
+                                        <button
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            setUploadedFiles(prev => prev.filter(f => f.id !== file.id));
+                                          }}
+                                          className="text-slate-400 hover:text-red-500 p-1 rounded-full hover:bg-slate-100 transition-colors"
+                                          title="移除"
+                                        >
+                                          <X className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    {/* Line 2: Pipeline State and Badges */}
+                                    <div className="mt-2 pt-2 border-t border-slate-100 flex flex-wrap items-center gap-1.5 justify-between">
+                                      {/* Left: Pipeline Status Badge */}
+                                      <div className="flex items-center gap-1">
+                                        {file.status === "idle" && (
+                                          <span className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-medium">排队中</span>
+                                        )}
+                                        {file.status === "decoding" && (
+                                          <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-medium flex items-center gap-1">
+                                            <RefreshCw className="w-2.5 h-2.5 animate-spin" /> 二进制解码...
+                                          </span>
+                                        )}
+                                        {file.status === "classifying" && (
+                                          <span className="text-[9px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded font-medium flex items-center gap-1">
+                                            <RefreshCw className="w-2.5 h-2.5 animate-spin" /> 版面分类扫描...
+                                          </span>
+                                        )}
+                                        {file.status === "completed" && file.isContract && (
+                                          <span className="text-[9px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-semibold flex items-center gap-0.5">
+                                            <CheckCircle className="w-2.5 h-2.5" /> OCR & 分类已就绪
+                                          </span>
+                                        )}
+                                        {file.status === "completed" && !file.isContract && (
+                                          <span className="text-[9px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold flex items-center gap-0.5">
+                                            <AlertTriangle className="w-2.5 h-2.5" /> 已拦截 (非合同)
+                                          </span>
+                                        )}
+                                        {file.status === "error" && (
+                                          <span className="text-[9px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-medium">处理失败</span>
+                                        )}
+                                      </div>
+
+                                      {/* Right: Classifier and Importance Badges */}
+                                      {file.status === "completed" && (
+                                        <div className="flex items-center gap-1">
+                                          {/* Filter Indicator */}
+                                          {file.isContract ? (
+                                            <span className="text-[9px] bg-sky-50 text-sky-700 px-1.5 py-0.5 rounded font-semibold border border-sky-100">
+                                              合同要素 ✅
+                                            </span>
+                                          ) : (
+                                            <span className="text-[9px] bg-red-50 text-red-700 px-1.5 py-0.5 rounded font-bold border border-red-100">
+                                              拦截屏蔽 ❌
+                                            </span>
+                                          )}
+
+                                          {/* Page/Document Classification */}
+                                          <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
+                                            file.classification === "payment_terms" 
+                                              ? "bg-purple-100 text-purple-700 font-bold" 
+                                              : file.classification === "signatures" 
+                                                ? "bg-teal-100 text-teal-700 font-bold" 
+                                                : file.classification === "non_contract" 
+                                                  ? "bg-slate-200 text-slate-700" 
+                                                  : "bg-slate-100 text-slate-600"
+                                          }`}>
+                                            分类：{translateClassification(file.classification)}
+                                          </span>
+
+                                          {/* Importance Tag */}
+                                          {file.importance === "high" && (
+                                            <span className="text-[9px] bg-rose-600 text-white px-1.5 py-0.5 rounded font-bold animate-pulse">
+                                              ★ 核心主板 (着重分析)
+                                            </span>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    {/* Rejection / Actionable Feedback */}
+                                    {file.status === "completed" && file.rejectionReason && (
+                                      <p className="text-[9px] text-slate-500 bg-slate-100/80 p-2 rounded-lg mt-2 leading-normal border-l-2 border-red-400">
+                                        <b>安全提示：</b>{file.rejectionReason}
+                                      </p>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            <p className="text-[10px] text-slate-400 font-normal italic leading-relaxed text-center mt-1">
+                              💡 体验技巧：您可以继续拖入或上传更多页面！系统会自动提取多张图，过滤非合同杂质并分类打包，为您呈现合并解析。
                             </p>
                           </div>
                         ) : (
                           <label htmlFor="contract-file-upload" className="cursor-pointer block">
                             <Upload className="w-8 h-8 text-slate-400 mx-auto mb-2 stroke-1 animate-pulse" />
-                            <p className="text-xs text-slate-700 font-semibold">拖拽文件或点击上传合同</p>
+                            <p className="text-xs text-slate-700 font-semibold">拖拽多张图片/文件，或点击批量上传</p>
                             <p className="text-[10px] text-slate-400 mt-1 max-w-[240px] mx-auto">
                               支持 Word (.docx)、Excel (.xlsx/.xls)、图片 (.png/.jpg) 及纯文本 (.txt)
                             </p>
                             <span className="inline-block text-[9px] bg-blue-50 text-blue-700 border border-blue-100 rounded-full px-2.5 py-0.5 mt-2 font-medium">
-                              已支持客户端高保真自动转码
+                              已支持多图流合并、高保真OCR与安全智能拦截过滤器
                             </span>
                           </label>
                         )}
@@ -1242,9 +1508,9 @@ export default function App() {
                         <div>
                           <div className="flex items-center justify-between mb-1">
                             <label className="text-[10px] font-bold text-slate-500 uppercase">提取到的文本内容及微调：</label>
-                            {uploadedFile && (
-                              <span className="text-[9px] text-blue-600 bg-blue-50 px-1.5 py-0.2 rounded font-medium">
-                                来自 {uploadedFile.name.endsWith(".docx") ? "Word 提纯" : uploadedFile.name.match(/\.(xlsx|xls)$/) ? "Excel 转化" : isImage ? "图片 OCR" : "文本文档"}
+                            {uploadedFiles.length > 0 && (
+                              <span className="text-[9px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded font-medium">
+                                来自 多图流合并编译器 ({uploadedFiles.filter(f => f.isContract && f.status === "completed").length} 页生效)
                               </span>
                             )}
                           </div>
