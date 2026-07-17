@@ -56,6 +56,22 @@ body {
   }
 }
 
+@keyframes scanLaser {
+  0% {
+    top: 0%;
+  }
+  50% {
+    top: 100%;
+  }
+  100% {
+    top: 0%;
+  }
+}
+
 .animate-pulse-glow {
   animation: pulseGlow 3s infinite ease-in-out;
+}
+
+.animate-scan-laser {
+  animation: scanLaser 2.5s infinite linear;
 }
