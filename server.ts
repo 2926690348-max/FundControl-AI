@@ -134,6 +134,205 @@ const SIMULATED_SYSTEMS_DB = {
   }
 };
 
+// AI File Analyzer Route (Real OCR / Classification using Gemini)
+app.post("/api/analyze-uploaded-file", async (req, res) => {
+  const { fileType, fileName, base64, rawText, mimeType } = req.body;
+
+  let isContract = true;
+  let classification: any = "general_terms";
+  let importance: any = "low";
+  let rejectionReason = "";
+  let extractedText = rawText || "";
+
+  // Check if Gemini key is available for real OCR & Analysis
+  const hasGemini = process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY" && process.env.GEMINI_API_KEY !== "";
+  if (hasGemini) {
+    try {
+      const ai = new GoogleGenAI({
+        apiKey: process.env.GEMINI_API_KEY,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
+        }
+      });
+
+      const analyzeSchema = {
+        type: Type.OBJECT,
+        properties: {
+          isContract: { type: Type.BOOLEAN, description: "是否是合规的合同/采购协议/财务账单凭证（或者是其包含一部分页），否则如果是日常餐饮发票、收据、生活照等则是 false" },
+          classification: { 
+            type: Type.STRING, 
+            description: "文档或页面分类，必须是以下之一: payment_terms, signatures, general_terms, non_contract, excel_sheet, word_doc" 
+          },
+          importance: { 
+            type: Type.STRING, 
+            description: "重要度级别，必须是以下之一: high, medium, low, none" 
+          },
+          rejectionReason: { type: Type.STRING, description: "如果 isContract 为 false，请写明具体的拦截屏蔽原因" },
+          rawText: { type: Type.STRING, description: "高保真提取或OCR识别出的中文纯文本内容，尽可能保留原句和金额数值等核心细节" }
+        },
+        required: ["isContract", "classification", "importance", "rawText"]
+      };
+
+      const systemPrompt = `你是一个跨国企业核心业财系统的多模态智能分类过滤与高保真OCR解析专家。你的任务是分析上传的采购合同或凭证图片/文本：
+1. 识别并提取所有中文文本，不要遗漏任何金额、日期、条款或公章签字信息。
+2. 进行安全分类与重要度研判：
+   - 如果发现是餐饮发票、外卖小票、日常收据等非合同干扰文件，将 isContract 设为 false，分类归入 "non_contract"，重要度设为 "none"，并详细阐述拦截原因（说明该单据是餐饮小票等，不应纳入合同台账）。
+   - 如果是合同页面，识别是核心条款还是普通法律条款，如果是付款/账期条款，分类归入 "payment_terms"，重要度设为 "high"；如果是签字盖章页，分类归入 "signatures"，重要度设为 "high"；如果是其他一般性条款，归入 "general_terms"，重要度设为 "low"。
+3. 将最终分析结构化并返回标准的JSON。`;
+
+      let contents: any[] = [];
+      if (fileType === "image" && base64) {
+        // Strip data:image/...;base64, prefix if it exists
+        const cleanBase64 = base64.includes(";base64,") ? base64.split(";base64,")[1] : base64;
+        const finalMimeType = mimeType || "image/png";
+
+        contents = [
+          {
+            inlineData: {
+              data: cleanBase64,
+              mimeType: finalMimeType
+            }
+          },
+          `请对这个文件（文件名：${fileName || "未命名图片"}）进行高保真OCR提取和智能业财属性分类归类：`
+        ];
+      } else {
+        contents = [
+          `文件名：${fileName || "未命名文档"}\n\n内容文本：\n${extractedText || "（空内容）"}\n\n请对此内容进行智能业财属性分类归类、过滤和安全核查，提取其中的有用信息。`
+        ];
+      }
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: contents,
+        config: {
+          systemInstruction: systemPrompt,
+          responseMimeType: "application/json",
+          responseSchema: analyzeSchema,
+          temperature: 0.1,
+        }
+      });
+
+      if (response && response.text) {
+        const parsed = JSON.parse(response.text.trim());
+        return res.json({
+          success: true,
+          source: "gemini-ocr",
+          data: {
+            isContract: parsed.isContract !== false,
+            classification: parsed.classification || "general_terms",
+            importance: parsed.importance || "low",
+            rejectionReason: parsed.rejectionReason || "",
+            rawText: parsed.rawText || extractedText
+          }
+        });
+      }
+    } catch (err: any) {
+      console.error("Real Gemini OCR API analysis failed, falling back to simulator:", err);
+    }
+  }
+
+  // Local fallback simulator (intelligent matching based on names / text contents)
+  const lowerName = (fileName || "").toLowerCase();
+  const lowerText = extractedText.toLowerCase();
+
+  if (fileType === "image") {
+    if (
+      lowerName.includes("invoice") || 
+      lowerName.includes("fapiao") || 
+      lowerName.includes("lunch") || 
+      lowerName.includes("dog") || 
+      lowerName.includes("cat") || 
+      lowerName.includes("food") || 
+      lowerName.includes("shouju") || 
+      lowerName.includes("发票") || 
+      lowerName.includes("收据") || 
+      lowerName.includes("外卖") || 
+      lowerName.includes("生活照") ||
+      (lowerName.includes("receipt") && !lowerName.includes("contract") && !lowerName.includes("agree"))
+    ) {
+      isContract = false;
+      classification = "non_contract";
+      importance = "none";
+      rejectionReason = "此图像特征或文件名匹配日常杂质/消费票据/生活照片。已自动触发安全拦截器，防止噪声数据污染大语言模型的提取任务。";
+      extractedText = `【防造干扰拦截页面 - ${fileName}】\n内容提示：已被智能过滤器拦截阻断。原因：不具备采购、供应、财务付款或印章签署任何合同特征要素。`;
+    } else if (
+      lowerName.includes("sign") || 
+      lowerName.includes("stamp") || 
+      lowerName.includes("seal") || 
+      lowerName.includes("gaizhang") || 
+      lowerName.includes("qianzhang") || 
+      lowerName.includes("签字") || 
+      lowerName.includes("盖章") || 
+      lowerName.includes("印章") ||
+      lowerName.includes("授权") ||
+      lowerName.includes("末页") ||
+      lowerName.includes("尾页")
+    ) {
+      classification = "signatures";
+      importance = "high";
+      extractedText = `【高保真OCR识别结果 - 合同签署/授权印章页】\n甲方：上海宝聚重工集团有限公司\n法定代表人授权签字：张宝聚 （已盖公司合同专用章、公章）\n乙方：沈阳机床股份有限公司\n法定代表人授权签字：李机床 （已盖公司公章、财务专用章）\n签署日期：2026年7月15日\n校验：骑缝章匹配良好。`;
+    } else if (
+      lowerName.includes("pay") || 
+      lowerName.includes("price") || 
+      lowerName.includes("money") || 
+      lowerName.includes("amount") || 
+      lowerName.includes("node") || 
+      lowerName.includes("fukuan") || 
+      lowerName.includes("付款") || 
+      lowerName.includes("账期") || 
+      lowerName.includes("金额") ||
+      lowerName.includes("第3页") ||
+      lowerName.includes("page3")
+    ) {
+      classification = "payment_terms";
+      importance = "high";
+      extractedText = `【高保真OCR识别结果 - 采购合同核心款项约定】\n合同编号：HT-2026-MULTI-07\n买方（甲方）：上海宝聚重工集团有限公司\n卖方（乙方）：沈阳机床股份有限公司\n一、设备清单及价格：\nVMC850B 型立式加工中心两台，含税总价共计：8,000,000.00 元（大写：捌佰万元整）。\n二、付款阶段约定：\n1. 合同签字盖章生效后 3 个工作日内，甲方向乙方支付总价 of 20%（即 ¥ 1,600,000.00）作为项目启动预付款。\n2. 全套机床运至甲方指定 1 号仓库完成初步安装并凭收货凭证及乙方出具 of 增值税专用发票，甲方向乙方支付合同总金额的 50%（即 ¥ 4,000,000.00）。\n3. 机床正式联动调试完成并经过双方技术组签字验收合格满 30 个工作日后，支付剩余 of 30%（即 ¥ 2,400,000.00）作为结算尾款。\n三、预计交货及提货日期：\n乙方负责运至指定地点，提货日为2026-08-01，到货日为2026-08-10。`;
+    } else {
+      classification = "general_terms";
+      importance = "low";
+      extractedText = `【高保真OCR识别结果 - 合同一般性条款】\n一、运输保险：由乙方负责运送并承担相关保险。\n二、争议解决：任何由此合同产生的法律诉讼纠纷均由甲方所在地人民法院管辖。\n三、保密协议：双方对本商务合同约定的定价公式、设备参数承担长期保密责任，期限为5年。`;
+    }
+  } else {
+    // Non-images (docx, xlsx, txt)
+    const isXls = lowerName.endsWith("xlsx") || lowerName.endsWith("xls");
+    const isDoc = lowerName.endsWith("docx");
+    
+    if (isXls) {
+      classification = "excel_sheet";
+      importance = "medium";
+    } else if (isDoc) {
+      classification = "word_doc";
+      importance = "medium";
+    } else {
+      classification = "general_terms";
+      importance = "low";
+    }
+
+    // Attempt some content keyword matches for better simulation feel
+    if (lowerText.includes("付款") || lowerText.includes("支付") || lowerText.includes("金额") || lowerText.includes("价格")) {
+      classification = "payment_terms";
+      importance = "high";
+    } else if (lowerText.includes("盖章") || lowerText.includes("签字") || lowerText.includes("法定代表人")) {
+      classification = "signatures";
+      importance = "high";
+    }
+  }
+
+  return res.json({
+    success: true,
+    source: "simulator-ocr",
+    data: {
+      isContract,
+      classification,
+      importance,
+      rejectionReason,
+      rawText: extractedText
+    }
+  });
+});
+
 // AI Contract Parser Route
 app.post("/api/parse-contract", async (req, res) => {
   const { contractText, contractType } = req.body;
