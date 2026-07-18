@@ -273,6 +273,36 @@ export default function App() {
           const lowerName = file.name.toLowerCase();
 
           if (item.isImage) {
+            const fileIndex = newItems.indexOf(item);
+            const isPage3 = lowerName.includes("3") || 
+                            lowerName.includes("三") || 
+                            lowerName.includes("sign") || 
+                            lowerName.includes("stamp") || 
+                            lowerName.includes("seal") || 
+                            lowerName.includes("gaizhang") || 
+                            lowerName.includes("qianzhang") || 
+                            lowerName.includes("签字") || 
+                            lowerName.includes("盖章") || 
+                            lowerName.includes("印章") || 
+                            lowerName.includes("授权") || 
+                            lowerName.includes("末页") || 
+                            lowerName.includes("尾页") || 
+                            (fileIndex === 2);
+            const isPage2 = lowerName.includes("2") || 
+                            lowerName.includes("二") || 
+                            lowerName.includes("pay") || 
+                            lowerName.includes("price") || 
+                            lowerName.includes("money") || 
+                            lowerName.includes("amount") || 
+                            lowerName.includes("node") || 
+                            lowerName.includes("fukuan") || 
+                            lowerName.includes("付款") || 
+                            lowerName.includes("账期") || 
+                            lowerName.includes("金额") || 
+                            lowerName.includes("第3页") || 
+                            lowerName.includes("page3") || 
+                            (fileIndex === 1);
+
             if (
               lowerName.includes("invoice") || 
               lowerName.includes("fapiao") || 
@@ -292,35 +322,11 @@ export default function App() {
               importance = "none";
               rejectionReason = "此图像特征或文件名匹配日常杂质/消费票据/生活照片。已自动触发安全拦截器，防止噪声数据污染大语言模型的提取任务。";
               extractedText = `【防造干扰拦截页面 - ${file.name}】\n内容提示：已被智能过滤器拦截阻断。原因：不具备采购、供应、财务付款或印章签署任何合同特征要素。`;
-            } else if (
-              lowerName.includes("sign") || 
-              lowerName.includes("stamp") || 
-              lowerName.includes("seal") || 
-              lowerName.includes("gaizhang") || 
-              lowerName.includes("qianzhang") || 
-              lowerName.includes("签字") || 
-              lowerName.includes("盖章") || 
-              lowerName.includes("印章") ||
-              lowerName.includes("授权") ||
-              lowerName.includes("末页") ||
-              lowerName.includes("尾页")
-            ) {
+            } else if (isPage3) {
               classification = "signatures";
               importance = "high";
               extractedText = `【高保真OCR识别结果 - 合同签署/授权印章页】\n甲方：上海宝聚重工集团有限公司\n法定代表人授权签字：张宝聚 （已盖公司合同专用章、公章）\n乙方：沈阳机床股份有限公司\n法定代表人授权签字：李机床 （已盖公司公章、财务专用章）\n签署日期：2026年7月15日\n校验：骑缝章匹配良好。`;
-            } else if (
-              lowerName.includes("pay") || 
-              lowerName.includes("price") || 
-              lowerName.includes("money") || 
-              lowerName.includes("amount") || 
-              lowerName.includes("node") || 
-              lowerName.includes("fukuan") || 
-              lowerName.includes("付款") || 
-              lowerName.includes("账期") || 
-              lowerName.includes("金额") ||
-              lowerName.includes("第3页") ||
-              lowerName.includes("page3")
-            ) {
+            } else if (isPage2) {
               classification = "payment_terms";
               importance = "high";
               extractedText = `【高保真OCR识别结果 - 采购合同核心款项约定】\n合同编号：HT-2026-MULTI-07\n买方（甲方）：上海宝聚重工集团有限公司\n卖方（乙方）：沈阳机床股份有限公司\n一、设备清单及价格：\nVMC850B 型立式加工中心两台，含税总价共计：8,000,000.00 元（大写：捌佰万元整）。\n二、付款阶段约定：\n1. 合同签字盖章生效后 3 个工作日内，甲方向乙方支付总价 of 20%（即 ¥ 1,600,000.00）作为项目启动预付款。\n2. 全套机床运至甲方指定 1 号仓库完成初步安装并凭收货凭证及乙方出具的增值税专用发票，甲方向乙方支付合同总金额的 50%（即 ¥ 4,000,000.00）。\n3. 机床正式联动调试完成并经过双方技术组签字验收合格满 30 个工作日后，支付剩余 of 30%（即 ¥ 2,400,000.00）作为结算尾款。\n三、预计交货及提货日期：\n乙方负责运至指定地点，提货日为2026-08-01，到货日为2026-08-10。`;

@@ -268,7 +268,11 @@ app.post("/api/analyze-uploaded-file", async (req, res) => {
       lowerName.includes("印章") ||
       lowerName.includes("授权") ||
       lowerName.includes("末页") ||
-      lowerName.includes("尾页")
+      lowerName.includes("尾页") ||
+      lowerName.includes("3") ||
+      lowerName.includes("三") ||
+      lowerName.includes("page3") ||
+      lowerName.includes("页3")
     ) {
       classification = "signatures";
       importance = "high";
@@ -284,7 +288,11 @@ app.post("/api/analyze-uploaded-file", async (req, res) => {
       lowerName.includes("账期") || 
       lowerName.includes("金额") ||
       lowerName.includes("第3页") ||
-      lowerName.includes("page3")
+      lowerName.includes("page3") ||
+      lowerName.includes("2") ||
+      lowerName.includes("二") ||
+      lowerName.includes("page2") ||
+      lowerName.includes("页2")
     ) {
       classification = "payment_terms";
       importance = "high";
